@@ -6,4 +6,7 @@ optimizers, and runtime environments.
 
 We plan to modify clang to support user-defined type annotations for
 use in the GAPS CLOSURE project. We will periodically merge the upstream
-master repository.
+master repository. 
+
+For instructions on merging an upstream repository into your fork, see:
+https://help.github.com/en/articles/merging-an-upstream-repository-into-your-fork
