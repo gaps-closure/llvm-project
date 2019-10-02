@@ -104,3 +104,4 @@ def ObjCInterfaceType : DerivedType<ObjCObjectType>, LeafType;
 def ObjCObjectPointerType : Type;
 def PipeType : Type;
 def AtomicType : Type;
+def AnnotatedType : Type, NeverCanonical;
