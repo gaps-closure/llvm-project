@@ -6075,6 +6075,39 @@ public:
   }
 };
 
+class AnnotatedType : public Type, public llvm::FoldingSetNode {
+  friend class ASTContext;  // ASTContext creates these.
+
+  QualType BaseType;
+
+  std::string Annotation;
+
+  AnnotatedType(QualType BaseTy, StringRef Ann, QualType Canonical)
+    : Type(Annotated, Canonical, BaseTy->isDependentType(),
+           BaseTy->isInstantiationDependentType(),
+           BaseTy->isVariablyModifiedType(),
+           BaseTy->containsUnexpandedParameterPack()),
+      BaseType(BaseTy), Annotation(Ann) {}
+
+  public:
+  QualType getBaseType() const { return BaseType; }
+  StringRef getAnnotation() const { return Annotation; }
+
+  bool isSugared() const { return true; }
+  QualType desugar() const { return BaseType; }
+
+  void Profile(llvm::FoldingSetNodeID &ID) {
+    Profile(ID, getBaseType(), Annotation);
+  }
+  static void Profile(llvm::FoldingSetNodeID &ID, QualType T, StringRef S) {
+    ID.AddPointer(T.getAsOpaquePtr());
+    ID.AddString(S);
+  }
+  static bool classof(const Type *T) {
+    return T->getTypeClass() == Annotated;
+  }
+};
+
 /// PipeType - OpenCL20.
 class PipeType : public Type, public llvm::FoldingSetNode {
   friend class ASTContext; // ASTContext creates these.

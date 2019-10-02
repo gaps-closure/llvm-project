@@ -1441,6 +1441,12 @@ def NeonPolyVectorType : TypeAttr {
   let ASTNode = 0;
 }
 
+def TypeAnnotate : TypeAttr {
+  let Spellings = [Clang<"type_annotate">];
+  let Args = [StringArgument<"Annotation">];
+  let Documentation = [Undocumented];
+}
+
 def NeonVectorType : TypeAttr {
   let Spellings = [Clang<"neon_vector_type">];
   let Args = [IntArgument<"NumElements">];

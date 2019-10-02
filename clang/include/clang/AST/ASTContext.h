@@ -223,6 +223,7 @@ private:
   mutable llvm::FoldingSet<DeducedTemplateSpecializationType>
     DeducedTemplateSpecializationTypes;
   mutable llvm::FoldingSet<AtomicType> AtomicTypes;
+  mutable llvm::FoldingSet<AtomicType> AnnotatedTypes;
   llvm::FoldingSet<AttributedType> AttributedTypes;
   mutable llvm::FoldingSet<PipeType> PipeTypes;
 
@@ -1246,6 +1247,10 @@ public:
   /// Return the uniqued reference to the atomic type for the specified
   /// type.
   QualType getAtomicType(QualType T) const;
+
+  /// Return the uniqued reference to the annotated type for the specified
+  /// base type and annotation.
+  QualType getAnnotatedType(QualType T, StringRef A) const;
 
   /// Return the uniqued reference to the type for a block of the
   /// specified type.

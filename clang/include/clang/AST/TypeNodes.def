@@ -110,6 +110,7 @@ TYPE(ObjCObject, Type)
 TYPE(ObjCInterface, ObjCObjectType)
 TYPE(ObjCObjectPointer, Type)
 TYPE(Pipe, Type)
+NON_CANONICAL_TYPE(Annotated, Type)
 TYPE(Atomic, Type)
 
 #ifdef LAST_TYPE

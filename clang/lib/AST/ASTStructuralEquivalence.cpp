@@ -930,6 +930,13 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
       return false;
     break;
 
+  case Type::Annotated: {
+    if (!IsStructurallyEquivalent(Context, cast<AnnotatedType>(T1)->getBaseType(),
+                                  cast<AnnotatedType>(T2)->getBaseType()))
+      return false;
+    break;
+  }
+
   case Type::Pipe:
     if (!IsStructurallyEquivalent(Context, cast<PipeType>(T1)->getElementType(),
                                   cast<PipeType>(T2)->getElementType()))

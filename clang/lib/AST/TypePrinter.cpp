@@ -259,6 +259,7 @@ bool TypePrinter::canPrefixQualifiers(const Type *T,
     case Type::Paren:
     case Type::PackExpansion:
     case Type::SubstTemplateTypeParm:
+    case Type::Annotated:
     case Type::MacroQualified:
       CanPrefixQualifiers = false;
       break;
@@ -1090,6 +1091,15 @@ void TypePrinter::printAtomicBefore(const AtomicType *T, raw_ostream &OS) {
 }
 
 void TypePrinter::printAtomicAfter(const AtomicType *T, raw_ostream &OS) {}
+
+void TypePrinter::printAnnotatedBefore(const AnnotatedType *T,
+                                       raw_ostream &OS) {
+  print(T->getBaseType(), OS, StringRef());
+  OS << " __attribute__((type_annotate(\"" << T->getAnnotation() << "\")))";
+  spaceBeforePlaceHolder(OS);
+}
+
+void TypePrinter::printAnnotatedAfter(const AnnotatedType *T, raw_ostream &OS) { }
 
 void TypePrinter::printPipeBefore(const PipeType *T, raw_ostream &OS) {
   IncludeStrongLifetimeRAII Strong(Policy);
