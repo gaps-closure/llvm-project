@@ -7179,7 +7179,7 @@ void TypeLocReader::VisitAtomicTypeLoc(AtomicTypeLoc TL) {
 }
 
 void TypeLocReader::VisitAnnotatedTypeLoc(AnnotatedTypeLoc TL) {
-  TL.setAnnotationLoc(ReadSourceLocation(Record, Idx));
+  TL.setAnnotationLoc(ReadSourceLocation());
 }
 
 void TypeLocReader::VisitPipeTypeLoc(PipeTypeLoc TL) {
