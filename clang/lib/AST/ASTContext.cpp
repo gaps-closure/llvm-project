@@ -5059,7 +5059,7 @@ QualType ASTContext::getAnnotatedType(QualType T, StringRef A) const {
     return QualType(AT, 0);
 
   QualType Canonical = getCanonicalType(T);
-  AnnotatedType *New =
+  auto *New =
       new (*this, TypeAlignment) AnnotatedType(T, A, Canonical);
   Types.push_back(New);
   AnnotatedTypes.InsertNode(New, InsertPos);

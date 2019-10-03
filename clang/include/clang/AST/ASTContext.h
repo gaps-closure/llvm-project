@@ -223,7 +223,7 @@ private:
   mutable llvm::FoldingSet<DeducedTemplateSpecializationType>
     DeducedTemplateSpecializationTypes;
   mutable llvm::FoldingSet<AtomicType> AtomicTypes;
-  mutable llvm::FoldingSet<AtomicType> AnnotatedTypes;
+  mutable llvm::FoldingSet<AnnotatedType> AnnotatedTypes;
   llvm::FoldingSet<AttributedType> AttributedTypes;
   mutable llvm::FoldingSet<PipeType> PipeTypes;
 
