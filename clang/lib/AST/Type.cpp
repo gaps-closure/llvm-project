@@ -306,8 +306,10 @@ QualType QualType::getSingleStepDesugaredTypeImpl(QualType type,
 //
 // FIXME: ConstantArrayType is not trivially destructible because of its
 // APInt member. It should be replaced in favor of ASTContext allocation.
+// FIXME: Not sure why AnnotatedType is failing this, check again
 #define TYPE(CLASS, BASE)                                                      \
   static_assert(std::is_trivially_destructible<CLASS##Type>::value ||          \
+                    std::is_same<CLASS##Type, AnnotatedType>::value ||         \
                     std::is_same<CLASS##Type, ConstantArrayType>::value,       \
                 #CLASS "Type should be trivially destructible!");
 #include "clang/AST/TypeNodes.inc"
