@@ -576,8 +576,8 @@ ASTTypeWriter::VisitAtomicType(const AtomicType *T) {
 
 void
 ASTTypeWriter::VisitAnnotatedType(const AnnotatedType *T) {
-  Writer.AddTypeRef(T->getBaseType(), Record);
-  Writer.AddString(T->getAnnotation(), Record);
+  Record.AddTypeRef(T->getBaseType(), Record);
+  Record.AddString(T->getAnnotation(), Record);
   Code = TYPE_ANNOTATED;
 }
 
