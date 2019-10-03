@@ -5381,6 +5381,15 @@ static void fillAttributedTypeLoc(AttributedTypeLoc TL,
   TL.setAttr(State.takeAttrForAttributedType(TL.getTypePtr()));
 }
 
+static void fillAnnotatedTypeLoc(AnnotatedTypeLoc TL,
+                                 const AttributeList *attrs) {
+  assert(attrs->getNumArgs() == 1 && "must have argument");
+  Expr *expr = static_cast<Expr *>(attrs->getArgAsExpr(0));
+  StringLiteral *literal = dyn_cast<StringLiteral>(expr);
+  assert(literal && "argument must be string literal");
+  TL.setAnnotationLoc(literal->getLocStart());
+}
+
 namespace {
   class TypeSpecLocFiller : public TypeLocVisitor<TypeSpecLocFiller> {
     ASTContext &Context;
@@ -5540,6 +5549,11 @@ namespace {
       }
     }
 
+    void VisitAnnotatedTypeLoc(AnnotatedTypeLoc TL) {
+      fillAnnotatedTypeLoc(TL, DS.getAttributes().getList());
+      Visit(TL.getBaseLoc());
+    }
+
     void VisitPipeTypeLoc(PipeTypeLoc TL) {
       TL.setKWLoc(DS.getTypeSpecTypeLoc());
 
@@ -5676,6 +5690,9 @@ namespace {
     }
     void VisitMacroQualifiedTypeLoc(MacroQualifiedTypeLoc TL) {
       TL.setExpansionLoc(Chunk.Loc);
+    }
+    void VisitAnnotatedTypeLoc(AnnotatedTypeLoc TL) {
+      fillAnnotatedTypeLoc(TL, Chunk.getAttrs());
     }
 
     void VisitTypeLoc(TypeLoc TL) {
@@ -7470,6 +7487,27 @@ static void HandleLifetimeBoundAttr(TypeProcessingState &State,
   }
 }
 
+static void HandleTypeAnnotateAttr(QualType& CurType,
+                                   const AttributeList &Attr, Sema &S) {
+  if (Attr.getNumArgs() != 1) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
+      << Attr.getName() << 1;
+    Attr.setInvalid();
+    return;
+  }
+
+  Expr *expr = static_cast<Expr *>(Attr.getArgAsExpr(0));
+  StringLiteral *literal = dyn_cast<StringLiteral>(expr);
+  if (literal == 0 || literal->isWide()) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
+      << Attr.getName() << AANT_ArgumentString
+      << expr->getSourceRange();
+    return;
+  }
+
+  CurType = S.Context.getAnnotatedType(CurType, literal->getString());
+}
+
 
 static void processTypeAttrs(TypeProcessingState &state, QualType &type,
                              TypeAttrLocation TAL,
@@ -7574,6 +7612,10 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
     case ParsedAttr::AT_NeonPolyVectorType:
       HandleNeonVectorTypeAttr(type, attr, state.getSema(),
                                VectorType::NeonPolyVector);
+      attr.setUsedAsTypeAttr();
+      break;
+    case AttributeList::AT_TypeAnnotate:
+      HandleTypeAnnotateAttr(type, attr, state.getSema());
       attr.setUsedAsTypeAttr();
       break;
     case ParsedAttr::AT_OpenCLAccess:

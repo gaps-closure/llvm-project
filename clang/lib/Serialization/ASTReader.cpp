@@ -6774,6 +6774,16 @@ QualType ASTReader::readTypeRecord(unsigned Index) {
     return Context.getAtomicType(ValueType);
   }
 
+  case TYPE_ANNOTATED: {
+    if (Record.size() != 2) {
+      Error("incorrect encoding of annotated type");
+      return QualType();
+    }
+    QualType BaseType = readType(*Loc.F, Record, Idx);
+    std::string Annotation = ReadString(Record, Idx);
+    return Context.getAnnotatedType(BaseType, Annotation);
+  }
+
   case TYPE_PIPE: {
     if (Record.size() != 2) {
       Error("Incorrect encoding of pipe type");
@@ -7166,6 +7176,10 @@ void TypeLocReader::VisitAtomicTypeLoc(AtomicTypeLoc TL) {
   TL.setKWLoc(ReadSourceLocation());
   TL.setLParenLoc(ReadSourceLocation());
   TL.setRParenLoc(ReadSourceLocation());
+}
+
+void TypeLocReader::VisitAnnotatedTypeLoc(AnnotatedTypeLoc TL) {
+  TL.setAnnotationLoc(ReadSourceLocation(Record, Idx));
 }
 
 void TypeLocReader::VisitPipeTypeLoc(PipeTypeLoc TL) {

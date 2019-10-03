@@ -1569,6 +1569,8 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
   if (D.hasAttr<AnnotateAttr>() && HaveInsertPoint())
     EmitVarAnnotations(&D, address.getPointer());
 
+  CGM.TADecorate(address.getPointer(), Ty, 1); // Alloca type is pointer to Ty.
+
   // Make sure we call @llvm.lifetime.end.
   if (emission.useLifetimeMarkers())
     EHStack.pushCleanup<CallLifetimeEnd>(NormalEHLifetimeMarker,
