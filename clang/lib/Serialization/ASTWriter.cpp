@@ -879,7 +879,7 @@ void TypeLocWriter::VisitAtomicTypeLoc(AtomicTypeLoc TL) {
 }
 
 void TypeLocWriter::VisitAnnotatedTypeLoc(AnnotatedTypeLoc TL) {
-  Writer.AddSourceLocation(TL.getAnnotationLoc(), Record);
+  Record.AddSourceLocation(TL.getAnnotationLoc());
 }
 
 void TypeLocWriter::VisitPipeTypeLoc(PipeTypeLoc TL) {

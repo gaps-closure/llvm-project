@@ -25,7 +25,8 @@ list of changes needed to port to 10.0.0.
  19. lib/CodeGen/CGExprScalar.cpp: Applied mods as is
  20. lib/CodeGen/CGExpr.cpp: Added to end of EmitStoreOfScalar, but code has changed quite a bit, needs checking (also unclear what is the condition to invoke TADecorate)
  21. lib/Sema/SemaExpr.cpp: Applied mods as is
- 22. lib/Sema/SemaType.cpp: Applied mods as is
+ 22. lib/Sema/SemaType.cpp: There are numerous changes to the code in this file;
+the changes need to be vetted carefully
  23. lib/Sema/TreeTransform.h: Applied mods as is
  24. lib/Serialization/ASTReader.cpp: ReadSourceLocation signature changed, no arguments needed
  25. lib/Serialization/ASTWriter.cpp: Writer is now replaced by Record

@@ -5382,12 +5382,20 @@ static void fillAttributedTypeLoc(AttributedTypeLoc TL,
 }
 
 static void fillAnnotatedTypeLoc(AnnotatedTypeLoc TL,
-                                 const AttributeList *attrs) {
-  assert(attrs->getNumArgs() == 1 && "must have argument");
-  Expr *expr = static_cast<Expr *>(attrs->getArgAsExpr(0));
-  StringLiteral *literal = dyn_cast<StringLiteral>(expr);
-  assert(literal && "argument must be string literal");
-  TL.setAnnotationLoc(literal->getLocStart());
+                                  const ParsedAttributesView &attrs) {
+  for (const ParsedAttr &AL : attrs) {
+    if (AL.getKind() == ParsedAttr::AT_TypeAnnotate) {
+      assert(AL.getNumArgs() == 1 && "must have argument");
+      Expr *expr = static_cast<Expr *>(AL.getArgAsExpr(0));
+      StringLiteral *literal = dyn_cast<StringLiteral>(expr);
+      assert(literal && "argument must be string literal");
+      TL.setAnnotationLoc(literal->getBeginLoc());
+      return;
+    }
+  }
+
+  llvm_unreachable(
+      "no type_annotate attribute found at the expected location!");
 }
 
 namespace {
@@ -5550,7 +5558,7 @@ namespace {
     }
 
     void VisitAnnotatedTypeLoc(AnnotatedTypeLoc TL) {
-      fillAnnotatedTypeLoc(TL, DS.getAttributes().getList());
+      fillAnnotatedTypeLoc(TL, DS.getAttributes());
       Visit(TL.getBaseLoc());
     }
 
@@ -7488,10 +7496,10 @@ static void HandleLifetimeBoundAttr(TypeProcessingState &State,
 }
 
 static void HandleTypeAnnotateAttr(QualType& CurType,
-                                   const AttributeList &Attr, Sema &S) {
+                                   const ParsedAttr &Attr, Sema &S) {
   if (Attr.getNumArgs() != 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
-      << Attr.getName() << 1;
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << Attr
+                                                                      << 1;
     Attr.setInvalid();
     return;
   }
@@ -7500,14 +7508,13 @@ static void HandleTypeAnnotateAttr(QualType& CurType,
   StringLiteral *literal = dyn_cast<StringLiteral>(expr);
   if (literal == 0 || literal->isWide()) {
     S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
-      << Attr.getName() << AANT_ArgumentString
+      << Attr << AANT_ArgumentString
       << expr->getSourceRange();
     return;
   }
 
   CurType = S.Context.getAnnotatedType(CurType, literal->getString());
 }
-
 
 static void processTypeAttrs(TypeProcessingState &state, QualType &type,
                              TypeAttrLocation TAL,
@@ -7614,7 +7621,7 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
                                VectorType::NeonPolyVector);
       attr.setUsedAsTypeAttr();
       break;
-    case AttributeList::AT_TypeAnnotate:
+    case ParsedAttr::AT_TypeAnnotate:
       HandleTypeAnnotateAttr(type, attr, state.getSema());
       attr.setUsedAsTypeAttr();
       break;
