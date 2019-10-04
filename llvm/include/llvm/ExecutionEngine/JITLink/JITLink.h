@@ -206,7 +206,7 @@ public:
   }
 
   /// Get the alignment for this content.
-  uint64_t getAlignment() const { return 1 << P2Align; }
+  uint64_t getAlignment() const { return 1ull << P2Align; }
 
   /// Get the alignment offset for this content.
   uint64_t getAlignmentOffset() const { return AlignmentOffset; }
@@ -633,10 +633,12 @@ private:
   template <typename... ArgTs> Block &createBlock(ArgTs &&... Args) {
     Block *B = reinterpret_cast<Block *>(Allocator.Allocate<Block>());
     new (B) Block(std::forward<ArgTs>(Args)...);
+    Blocks.insert(B);
     return *B;
   }
 
   void destroyBlock(Block &B) {
+    Blocks.erase(&B);
     B.~Block();
     Allocator.Deallocate(&B);
   }
@@ -707,6 +709,8 @@ public:
       : Name(std::move(Name)), PointerSize(PointerSize),
         Endianness(Endianness) {}
 
+  ~LinkGraph();
+
   /// Returns the name of this graph (usually the name of the original
   /// underlying MemoryBuffer).
   const std::string &getName() { return Name; }
@@ -728,19 +732,15 @@ public:
   Block &createContentBlock(Section &Parent, StringRef Content,
                             uint64_t Address, uint64_t Alignment,
                             uint64_t AlignmentOffset) {
-    auto &B = createBlock(Parent, Parent.getNextBlockOrdinal(), Content,
-                          Address, Alignment, AlignmentOffset);
-    Blocks.insert(&B);
-    return B;
+    return createBlock(Parent, Parent.getNextBlockOrdinal(), Content, Address,
+                       Alignment, AlignmentOffset);
   }
 
   /// Create a zero-fill block.
   Block &createZeroFillBlock(Section &Parent, uint64_t Size, uint64_t Address,
                              uint64_t Alignment, uint64_t AlignmentOffset) {
-    auto &B = createBlock(Parent, Parent.getNextBlockOrdinal(), Size, Address,
-                          Alignment, AlignmentOffset);
-    Blocks.insert(&B);
-    return B;
+    return createBlock(Parent, Parent.getNextBlockOrdinal(), Size, Address,
+                       Alignment, AlignmentOffset);
   }
 
   /// Add an external symbol.
@@ -972,7 +972,7 @@ createLookupContinuation(Continuation Cont) {
   };
 
   return std::make_unique<Impl>(std::move(Cont));
-};
+}
 
 /// Holds context for a single jitLink invocation.
 class JITLinkContext {

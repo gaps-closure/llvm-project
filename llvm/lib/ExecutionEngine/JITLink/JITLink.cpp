@@ -74,6 +74,7 @@ const char *getLinkageName(Linkage L) {
   case Linkage::Weak:
     return "weak";
   }
+  llvm_unreachable("Unrecognized llvm.jitlink.Linkage enum");
 }
 
 const char *getScopeName(Scope S) {
@@ -85,6 +86,7 @@ const char *getScopeName(Scope S) {
   case Scope::Local:
     return "local";
   }
+  llvm_unreachable("Unrecognized llvm.jitlink.Scope enum");
 }
 
 raw_ostream &operator<<(raw_ostream &OS, const Block &B) {
@@ -143,6 +145,12 @@ void printEdge(raw_ostream &OS, const Block &B, const Edge &E,
 Section::~Section() {
   for (auto *Sym : Symbols)
     Sym->~Symbol();
+}
+
+LinkGraph::~LinkGraph() {
+  // Destroy blocks.
+  for (auto *B : Blocks)
+    B->~Block();
 }
 
 void LinkGraph::dump(raw_ostream &OS,
