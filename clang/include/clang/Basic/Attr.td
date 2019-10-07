@@ -1445,6 +1445,7 @@ def TypeAnnotate : TypeAttr {
   let Spellings = [Clang<"type_annotate">];
   let Args = [StringArgument<"Annotation">];
   let Documentation = [Undocumented];
+  let PragmaAttributeSupport = 1;
 }
 
 def NeonVectorType : TypeAttr {
