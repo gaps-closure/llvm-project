@@ -4604,6 +4604,11 @@ CXString clang_getCursorSpelling(CXCursor C) {
     return cxstring::createDup(AA->getAnnotation());
   }
 
+  if (C.kind == CXCursor_TypeAnnotateAttr) {
+    const TypeAnnotateAttr *AA = cast<TypeAnnotateAttr>(cxcursor::getCursorAttr(C));
+    return cxstring::createDup(AA->getAnnotation());
+  }
+
   if (C.kind == CXCursor_AsmLabelAttr) {
     const AsmLabelAttr *AA = cast<AsmLabelAttr>(cxcursor::getCursorAttr(C));
     return cxstring::createDup(AA->getLabel());
@@ -5293,6 +5298,8 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
       return cxstring::createRef("attribute(override)");
   case CXCursor_AnnotateAttr:
     return cxstring::createRef("attribute(annotate)");
+  case CXCursor_TypeAnnotateAttr:
+    return cxstring::createRef("attribute(type_annotate)");
   case CXCursor_AsmLabelAttr:
     return cxstring::createRef("asm label");
   case CXCursor_PackedAttr:

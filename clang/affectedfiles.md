@@ -31,3 +31,50 @@ the changes need to be vetted carefully
  24. lib/Serialization/ASTReader.cpp: ReadSourceLocation signature changed, no arguments needed
  25. lib/Serialization/ASTWriter.cpp: Writer is now replaced by Record
  26. tools/libclang/CIndex.cpp: Applied mods as is, with minor tweak to comment
+
+In addition to the above, made the following changes to expose type annotations
+to Python bindings.
+
+Added to clang/bindings/python/clang/cindex.py 
+ 
+```
+# Experimental Type Annotation 
+CursorKind.TYPE_ANNOTATE_ATTR = CursorKind(699)
+```
+
+Added to clang/include/clang-c/Index.h
+```
+   /**
+    * experimental Quala type annotation
+    */
+  CXCursor_TypeAnnotateAttr              = 699,
+```
+
+Added to clang/tools/libclang/CIndex.cpp
+ 
+```
+  if (C.kind == CXCursor_TypeAnnotateAttr) {
+    const TypeAnnotateAttr *AA = cast<TypeAnnotateAttr>(cxcursor::getCursorAttr(C));
+    return cxstring::createDup(AA->getAnnotation());
+  }
+```
+and
+
+```
+  case CXCursor_TypeAnnotateAttr:
+    return cxstring::createRef("attribute(type_annotate)");
+```
+
+Added to clang/tools/libclang/CXCursor.cpp
+```
+    case attr::TypeAnnotate: return CXCursor_TypeAnnotateAttr;
+```
+
+This port needs to be vetted. There are a number of issues:
+* Type annotations on typedef are not taken; this does not match what is claimed in the orginal author's blog on Quala
+* '#pragma clang attribute' does not support type_atrtribute; adding
+'let PragmaAttributeSupport = 1;' to include/clang/Basic/Attr.td suppressed
+the error message, however the type annotations do not get applied. Not clear
+where in the pragma parsing code this functionality is implemented
+* The numerous changes above to expose type annotation to python did not
+work either

@@ -1366,6 +1366,9 @@ CursorKind.STATIC_ASSERT = CursorKind(602)
 # A friend declaration
 CursorKind.FRIEND_DECL = CursorKind(603)
 
+# Experimental Type Annotation 
+CursorKind.TYPE_ANNOTATE_ATTR = CursorKind(699)
+
 # A code completion overload candidate.
 CursorKind.OVERLOAD_CANDIDATE = CursorKind(700)
 

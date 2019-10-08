@@ -2643,6 +2643,11 @@ enum CXCursorKind {
   CXCursor_LastExtraDecl                 = CXCursor_FriendDecl,
 
   /**
+   * experimental Quala type annotation
+   */
+  CXCursor_TypeAnnotateAttr              = 699,
+
+  /**
    * A code completion overload candidate.
    */
   CXCursor_OverloadCandidate             = 700
