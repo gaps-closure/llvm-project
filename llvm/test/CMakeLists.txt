@@ -14,6 +14,7 @@ llvm_canonicalize_cmake_booleans(
   LLVM_USE_INTEL_JITEVENTS
   LLVM_BUILD_EXAMPLES
   LLVM_ENABLE_PLUGINS
+  LLVM_BYE_LINK_INTO_TOOLS
   )
 
 configure_lit_site_cfg(
@@ -70,10 +71,12 @@ set(LLVM_TEST_DEPENDS
           llvm-extract
           llvm-isel-fuzzer
           llvm-ifs
+          llvm-install-name-tool
           llvm-jitlink
           llvm-lib
           llvm-link
           llvm-lipo
+          llvm-locstats
           llvm-lto2
           llvm-mc
           llvm-mca
@@ -133,6 +136,7 @@ endif()
 
 if(LLVM_BUILD_EXAMPLES)
   list(APPEND LLVM_TEST_DEPENDS
+    Bye
     Kaleidoscope-Ch3
     Kaleidoscope-Ch4
     Kaleidoscope-Ch5

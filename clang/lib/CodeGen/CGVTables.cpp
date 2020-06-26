@@ -13,6 +13,7 @@
 #include "CGCXXABI.h"
 #include "CodeGenFunction.h"
 #include "CodeGenModule.h"
+#include "clang/AST/Attr.h"
 #include "clang/AST/CXXInheritance.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/Basic/CodeGenOptions.h"
@@ -335,7 +336,7 @@ void CodeGenFunction::EmitCallAndReturnForThunk(llvm::FunctionCallee Callee,
   for (const ParmVarDecl *PD : MD->parameters())
     EmitDelegateCallArg(CallArgs, PD, SourceLocation());
 
-  const FunctionProtoType *FPT = MD->getType()->getAs<FunctionProtoType>();
+  const FunctionProtoType *FPT = MD->getType()->castAs<FunctionProtoType>();
 
 #ifndef NDEBUG
   const CGFunctionInfo &CallFnInfo = CGM.getTypes().arrangeCXXMethodCall(
@@ -436,7 +437,8 @@ void CodeGenFunction::EmitMustTailThunk(GlobalDecl GD,
   // Finish the function to maintain CodeGenFunction invariants.
   // FIXME: Don't emit unreachable code.
   EmitBlock(createBasicBlock());
-  FinishFunction();
+
+  FinishThunk();
 }
 
 void CodeGenFunction::generateThunk(llvm::Function *Fn,
@@ -563,7 +565,7 @@ llvm::Constant *CodeGenVTables::maybeEmitThunk(GlobalDecl GD,
   CGM.SetLLVMFunctionAttributesForDefinition(GD.getDecl(), ThunkFn);
 
   // Thunks for variadic methods are special because in general variadic
-  // arguments cannot be perferctly forwarded. In the general case, clang
+  // arguments cannot be perfectly forwarded. In the general case, clang
   // implements such thunks by cloning the original function body. However, for
   // thunks with no return adjustment on targets that support musttail, we can
   // use musttail to perfectly forward the variadic arguments.
@@ -675,7 +677,12 @@ void CodeGenVTables::addVTableComponent(
       // Method is acceptable, continue processing as usual.
     }
 
-    auto getSpecialVirtualFn = [&](StringRef name) {
+    auto getSpecialVirtualFn = [&](StringRef name) -> llvm::Constant * {
+      // For NVPTX devices in OpenMP emit special functon as null pointers,
+      // otherwise linking ends up with unresolved references.
+      if (CGM.getLangOpts().OpenMP && CGM.getLangOpts().OpenMPIsDevice &&
+          CGM.getTriple().isNVPTX())
+        return llvm::ConstantPointerNull::get(CGM.Int8PtrTy);
       llvm::FunctionType *fnTy =
           llvm::FunctionType::get(CGM.VoidTy, /*isVarArg=*/false);
       llvm::Constant *fn = cast<llvm::Constant>(
@@ -808,7 +815,7 @@ CodeGenVTables::GenerateConstructionVTable(const CXXRecordDecl *RD,
   assert(!VTable->isDeclaration() && "Shouldn't set properties on declaration");
   CGM.setGVProperties(VTable, RD);
 
-  CGM.EmitVTableTypeMetadata(VTable, *VTLayout.get());
+  CGM.EmitVTableTypeMetadata(RD, VTable, *VTLayout.get());
 
   return VTable;
 }
@@ -1039,7 +1046,32 @@ bool CodeGenModule::HasHiddenLTOVisibility(const CXXRecordDecl *RD) {
   return true;
 }
 
-void CodeGenModule::EmitVTableTypeMetadata(llvm::GlobalVariable *VTable,
+llvm::GlobalObject::VCallVisibility
+CodeGenModule::GetVCallVisibilityLevel(const CXXRecordDecl *RD) {
+  LinkageInfo LV = RD->getLinkageAndVisibility();
+  llvm::GlobalObject::VCallVisibility TypeVis;
+  if (!isExternallyVisible(LV.getLinkage()))
+    TypeVis = llvm::GlobalObject::VCallVisibilityTranslationUnit;
+  else if (HasHiddenLTOVisibility(RD))
+    TypeVis = llvm::GlobalObject::VCallVisibilityLinkageUnit;
+  else
+    TypeVis = llvm::GlobalObject::VCallVisibilityPublic;
+
+  for (auto B : RD->bases())
+    if (B.getType()->getAsCXXRecordDecl()->isDynamicClass())
+      TypeVis = std::min(TypeVis,
+                    GetVCallVisibilityLevel(B.getType()->getAsCXXRecordDecl()));
+
+  for (auto B : RD->vbases())
+    if (B.getType()->getAsCXXRecordDecl()->isDynamicClass())
+      TypeVis = std::min(TypeVis,
+                    GetVCallVisibilityLevel(B.getType()->getAsCXXRecordDecl()));
+
+  return TypeVis;
+}
+
+void CodeGenModule::EmitVTableTypeMetadata(const CXXRecordDecl *RD,
+                                           llvm::GlobalVariable *VTable,
                                            const VTableLayout &VTLayout) {
   if (!getCodeGenOpts().LTOUnit)
     return;
@@ -1098,5 +1130,11 @@ void CodeGenModule::EmitVTableTypeMetadata(llvm::GlobalVariable *VTable,
               Context.getRecordType(AP.first).getTypePtr()));
       VTable->addTypeMetadata((PointerWidth * I).getQuantity(), MD);
     }
+  }
+
+  if (getCodeGenOpts().VirtualFunctionElimination) {
+    llvm::GlobalObject::VCallVisibility TypeVis = GetVCallVisibilityLevel(RD);
+    if (TypeVis != llvm::GlobalObject::VCallVisibilityPublic)
+      VTable->addVCallVisibilityMetadata(TypeVis);
   }
 }

@@ -629,6 +629,11 @@ bool CursorVisitor::VisitDeclContext(DeclContext *DC) {
     Decl *D = *I;
     if (D->getLexicalDeclContext() != DC)
       continue;
+    // Filter out synthesized property accessor redeclarations.
+    if (isa<ObjCImplDecl>(DC))
+      if (auto *OMD = dyn_cast<ObjCMethodDecl>(D))
+        if (OMD->isSynthesizedAccessorStub())
+          continue;
     const Optional<bool> V = handleDeclForVisitation(D);
     if (!V.hasValue())
       continue;
@@ -752,6 +757,11 @@ bool CursorVisitor::VisitClassTemplatePartialSpecializationDecl(
 }
 
 bool CursorVisitor::VisitTemplateTypeParmDecl(TemplateTypeParmDecl *D) {
+  if (const auto *TC = D->getTypeConstraint())
+    if (Visit(MakeCXCursor(TC->getImmediatelyDeclaredConstraint(), StmtParent,
+                           TU, RegionOfInterest)))
+      return true;
+
   // Visit the default argument.
   if (D->hasDefaultArgument() && !D->defaultArgumentWasInherited())
     if (TypeSourceInfo *DefArg = D->getDefaultArgumentInfo())
@@ -2025,6 +2035,7 @@ public:
   void VisitOMPCriticalDirective(const OMPCriticalDirective *D);
   void VisitOMPParallelForDirective(const OMPParallelForDirective *D);
   void VisitOMPParallelForSimdDirective(const OMPParallelForSimdDirective *D);
+  void VisitOMPParallelMasterDirective(const OMPParallelMasterDirective *D);
   void VisitOMPParallelSectionsDirective(const OMPParallelSectionsDirective *D);
   void VisitOMPTaskDirective(const OMPTaskDirective *D);
   void VisitOMPTaskyieldDirective(const OMPTaskyieldDirective *D);
@@ -2047,6 +2058,13 @@ public:
   void VisitOMPTeamsDirective(const OMPTeamsDirective *D);
   void VisitOMPTaskLoopDirective(const OMPTaskLoopDirective *D);
   void VisitOMPTaskLoopSimdDirective(const OMPTaskLoopSimdDirective *D);
+  void VisitOMPMasterTaskLoopDirective(const OMPMasterTaskLoopDirective *D);
+  void
+  VisitOMPMasterTaskLoopSimdDirective(const OMPMasterTaskLoopSimdDirective *D);
+  void VisitOMPParallelMasterTaskLoopDirective(
+      const OMPParallelMasterTaskLoopDirective *D);
+  void VisitOMPParallelMasterTaskLoopSimdDirective(
+      const OMPParallelMasterTaskLoopSimdDirective *D);
   void VisitOMPDistributeDirective(const OMPDistributeDirective *D);
   void VisitOMPDistributeParallelForDirective(
       const OMPDistributeParallelForDirective *D);
@@ -2442,6 +2460,12 @@ void OMPClauseEnqueue::VisitOMPUseDevicePtrClause(const OMPUseDevicePtrClause *C
 void OMPClauseEnqueue::VisitOMPIsDevicePtrClause(const OMPIsDevicePtrClause *C) {
   VisitOMPClauseList(C);
 }
+void OMPClauseEnqueue::VisitOMPNontemporalClause(
+    const OMPNontemporalClause *C) {
+  VisitOMPClauseList(C);
+  for (const auto *E : C->private_refs())
+    Visitor->AddStmt(E);
+}
 }
 
 void EnqueueVisitor::EnqueueChildren(const OMPClause *S) {
@@ -2799,6 +2823,11 @@ void EnqueueVisitor::VisitOMPParallelForSimdDirective(
   VisitOMPLoopDirective(D);
 }
 
+void EnqueueVisitor::VisitOMPParallelMasterDirective(
+    const OMPParallelMasterDirective *D) {
+  VisitOMPExecutableDirective(D);
+}
+
 void EnqueueVisitor::VisitOMPParallelSectionsDirective(
     const OMPParallelSectionsDirective *D) {
   VisitOMPExecutableDirective(D);
@@ -2888,6 +2917,26 @@ void EnqueueVisitor::VisitOMPTaskLoopDirective(const OMPTaskLoopDirective *D) {
 
 void EnqueueVisitor::VisitOMPTaskLoopSimdDirective(
     const OMPTaskLoopSimdDirective *D) {
+  VisitOMPLoopDirective(D);
+}
+
+void EnqueueVisitor::VisitOMPMasterTaskLoopDirective(
+    const OMPMasterTaskLoopDirective *D) {
+  VisitOMPLoopDirective(D);
+}
+
+void EnqueueVisitor::VisitOMPMasterTaskLoopSimdDirective(
+    const OMPMasterTaskLoopSimdDirective *D) {
+  VisitOMPLoopDirective(D);
+}
+
+void EnqueueVisitor::VisitOMPParallelMasterTaskLoopDirective(
+    const OMPParallelMasterTaskLoopDirective *D) {
+  VisitOMPLoopDirective(D);
+}
+
+void EnqueueVisitor::VisitOMPParallelMasterTaskLoopSimdDirective(
+    const OMPParallelMasterTaskLoopSimdDirective *D) {
   VisitOMPLoopDirective(D);
 }
 
@@ -3563,6 +3612,7 @@ enum CXErrorCode clang_parseTranslationUnit2(
     const char *const *command_line_args, int num_command_line_args,
     struct CXUnsavedFile *unsaved_files, unsigned num_unsaved_files,
     unsigned options, CXTranslationUnit *out_TU) {
+  noteBottomOfStack();
   SmallVector<const char *, 4> Args;
   Args.push_back("clang");
   Args.append(command_line_args, command_line_args + num_command_line_args);
@@ -3587,6 +3637,7 @@ enum CXErrorCode clang_parseTranslationUnit2FullArgv(
 
   CXErrorCode result = CXError_Failure;
   auto ParseTranslationUnitImpl = [=, &result] {
+    noteBottomOfStack();
     result = clang_parseTranslationUnit_Impl(
         CIdx, source_filename, command_line_args, num_command_line_args,
         llvm::makeArrayRef(unsaved_files, num_unsaved_files), options, out_TU);
@@ -5004,7 +5055,12 @@ CXString clang_getCursorDisplayName(CXCursor C) {
       // There is no parameter name, which makes this tricky. Try to come up
       // with something useful that isn't too long.
       if (TemplateTypeParmDecl *TTP = dyn_cast<TemplateTypeParmDecl>(Param))
-        OS << (TTP->wasDeclaredWithTypename()? "typename" : "class");
+        if (const auto *TC = TTP->getTypeConstraint()) {
+          TC->getConceptNameInfo().printName(OS, Policy);
+          if (TC->hasExplicitTemplateArgs())
+            OS << "<...>";
+        } else
+          OS << (TTP->wasDeclaredWithTypename()? "typename" : "class");
       else if (NonTypeTemplateParmDecl *NTTP
                                     = dyn_cast<NonTypeTemplateParmDecl>(Param))
         OS << NTTP->getType().getAsString(Policy);
@@ -5421,6 +5477,8 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
     return cxstring::createRef("OMPParallelForDirective");
   case CXCursor_OMPParallelForSimdDirective:
     return cxstring::createRef("OMPParallelForSimdDirective");
+  case CXCursor_OMPParallelMasterDirective:
+    return cxstring::createRef("OMPParallelMasterDirective");
   case CXCursor_OMPParallelSectionsDirective:
     return cxstring::createRef("OMPParallelSectionsDirective");
   case CXCursor_OMPTaskDirective:
@@ -5463,6 +5521,14 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
     return cxstring::createRef("OMPTaskLoopDirective");
   case CXCursor_OMPTaskLoopSimdDirective:
     return cxstring::createRef("OMPTaskLoopSimdDirective");
+  case CXCursor_OMPMasterTaskLoopDirective:
+    return cxstring::createRef("OMPMasterTaskLoopDirective");
+  case CXCursor_OMPMasterTaskLoopSimdDirective:
+    return cxstring::createRef("OMPMasterTaskLoopSimdDirective");
+  case CXCursor_OMPParallelMasterTaskLoopDirective:
+    return cxstring::createRef("OMPParallelMasterTaskLoopDirective");
+  case CXCursor_OMPParallelMasterTaskLoopSimdDirective:
+    return cxstring::createRef("OMPParallelMasterTaskLoopSimdDirective");
   case CXCursor_OMPDistributeDirective:
     return cxstring::createRef("OMPDistributeDirective");
   case CXCursor_OMPDistributeParallelForDirective:
@@ -6273,6 +6339,8 @@ CXCursor clang_getCursorDefinition(CXCursor C) {
   case Decl::PragmaDetectMismatch:
   case Decl::UsingPack:
   case Decl::Concept:
+  case Decl::LifetimeExtendedTemporary:
+  case Decl::RequiresExprBody:
     return C;
 
   // Declaration kinds that don't make any sense here, but are
@@ -6581,7 +6649,10 @@ void clang_enableStackTraces(void) {
 
 void clang_executeOnThread(void (*fn)(void*), void *user_data,
                            unsigned stack_size) {
-  llvm::llvm_execute_on_thread(fn, user_data, stack_size);
+  llvm::llvm_execute_on_thread(fn, user_data,
+                               stack_size == 0
+                                   ? clang::DesiredStackSize
+                                   : llvm::Optional<unsigned>(stack_size));
 }
 
 //===----------------------------------------------------------------------===//

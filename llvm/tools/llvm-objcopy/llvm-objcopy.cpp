@@ -313,10 +313,33 @@ static Error executeObjcopy(CopyConfig &Config) {
   return Error::success();
 }
 
+namespace {
+
+enum class ToolType { Objcopy, Strip, InstallNameTool };
+
+} // anonymous namespace
+
 int main(int argc, char **argv) {
   InitLLVM X(argc, argv);
   ToolName = argv[0];
-  bool IsStrip = sys::path::stem(ToolName).contains("strip");
+
+  StringRef Stem = sys::path::stem(ToolName);
+  auto Is = [=](StringRef Tool) {
+    // We need to recognize the following filenames:
+    //
+    // llvm-objcopy -> objcopy
+    // strip-10.exe -> strip
+    // powerpc64-unknown-freebsd13-objcopy -> objcopy
+    // llvm-install-name-tool -> install-name-tool
+    auto I = Stem.rfind_lower(Tool);
+    return I != StringRef::npos &&
+           (I + Tool.size() == Stem.size() || !isAlnum(Stem[I + Tool.size()]));
+  };
+  ToolType Tool = ToolType::Objcopy;
+  if (Is("strip"))
+    Tool = ToolType::Strip;
+  else if (Is("install-name-tool") || Is("install_name_tool"))
+    Tool = ToolType::InstallNameTool;
 
   // Expand response files.
   // TODO: Move these lines, which are copied from lib/Support/CommandLine.cpp,
@@ -332,10 +355,11 @@ int main(int argc, char **argv) {
                           NewArgv);
 
   auto Args = makeArrayRef(NewArgv).drop_front();
-
   Expected<DriverConfig> DriverConfig =
-      IsStrip ? parseStripOptions(Args, reportWarning)
-              : parseObjcopyOptions(Args);
+      (Tool == ToolType::Strip) ? parseStripOptions(Args, reportWarning)
+                                : ((Tool == ToolType::InstallNameTool)
+                                       ? parseInstallNameToolOptions(Args)
+                                       : parseObjcopyOptions(Args, reportWarning));
   if (!DriverConfig) {
     logAllUnhandledErrors(DriverConfig.takeError(),
                           WithColor::error(errs(), ToolName));

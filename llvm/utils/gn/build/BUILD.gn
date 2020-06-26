@@ -60,6 +60,7 @@ config("compiler_defaults") {
     if (is_optimized) {
       cflags += [
         "/O2",
+        "/Gw",
         "/Zc:inline",
       ]
       ldflags += [
@@ -221,6 +222,7 @@ config("crt_code") {
     "-fPIC",
     "-funwind-tables",
     "-gline-tables-only",
+    "-fvisibility=hidden",
   ]
 }
 

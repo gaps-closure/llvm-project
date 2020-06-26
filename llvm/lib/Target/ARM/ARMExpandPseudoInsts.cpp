@@ -1207,15 +1207,16 @@ bool ARMExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
 
 
       // Update call site info and delete the pseudo instruction TCRETURN.
-      MBB.getParent()->updateCallSiteInfo(&MI, &*NewMI);
+      MBB.getParent()->moveCallSiteInfo(&MI, &*NewMI);
       MBB.erase(MBBI);
 
       MBBI = NewMI;
       return true;
     }
+    case ARM::VMOVHcc:
     case ARM::VMOVScc:
     case ARM::VMOVDcc: {
-      unsigned newOpc = Opcode == ARM::VMOVScc ? ARM::VMOVS : ARM::VMOVD;
+      unsigned newOpc = Opcode != ARM::VMOVDcc ? ARM::VMOVS : ARM::VMOVD;
       BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(newOpc),
               MI.getOperand(1).getReg())
           .add(MI.getOperand(2))
@@ -1439,7 +1440,7 @@ bool ARMExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
 
       MIB.cloneMemRefs(MI);
       TransferImpOps(MI, MIB, MIB);
-      MI.getMF()->updateCallSiteInfo(&MI, &*MIB);
+      MI.getMF()->moveCallSiteInfo(&MI, &*MIB);
       MI.eraseFromParent();
       return true;
     }

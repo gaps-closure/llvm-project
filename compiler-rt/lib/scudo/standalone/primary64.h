@@ -125,13 +125,22 @@ public:
   }
 
   void disable() {
-    for (uptr I = 0; I < NumClasses; I++)
-      getRegionInfo(I)->Mutex.lock();
+    // The BatchClassId must be locked last since other classes can use it.
+    for (sptr I = static_cast<sptr>(NumClasses) - 1; I >= 0; I--) {
+      if (static_cast<uptr>(I) == SizeClassMap::BatchClassId)
+        continue;
+      getRegionInfo(static_cast<uptr>(I))->Mutex.lock();
+    }
+    getRegionInfo(SizeClassMap::BatchClassId)->Mutex.lock();
   }
 
   void enable() {
-    for (sptr I = static_cast<sptr>(NumClasses) - 1; I >= 0; I--)
-      getRegionInfo(static_cast<uptr>(I))->Mutex.unlock();
+    getRegionInfo(SizeClassMap::BatchClassId)->Mutex.unlock();
+    for (uptr I = 0; I < NumClasses; I++) {
+      if (I == SizeClassMap::BatchClassId)
+        continue;
+      getRegionInfo(I)->Mutex.unlock();
+    }
   }
 
   template <typename F> void iterateOverBlocks(F Callback) const {
@@ -147,7 +156,7 @@ public:
     }
   }
 
-  void printStats() const {
+  void getStats(ScopedString *Str) const {
     // TODO(kostyak): get the RSS per region.
     uptr TotalMapped = 0;
     uptr PoppedBlocks = 0;
@@ -159,12 +168,13 @@ public:
       PoppedBlocks += Region->Stats.PoppedBlocks;
       PushedBlocks += Region->Stats.PushedBlocks;
     }
-    Printf("Stats: Primary64: %zuM mapped (%zuM rss) in %zu allocations; "
-           "remains %zu\n",
-           TotalMapped >> 20, 0, PoppedBlocks, PoppedBlocks - PushedBlocks);
+    Str->append("Stats: SizeClassAllocator64: %zuM mapped (%zuM rss) in %zu "
+                "allocations; remains %zu\n",
+                TotalMapped >> 20, 0, PoppedBlocks,
+                PoppedBlocks - PushedBlocks);
 
     for (uptr I = 0; I < NumClasses; I++)
-      printStats(I, 0);
+      getStats(Str, I, 0);
   }
 
   uptr releaseToOS() {
@@ -186,6 +196,8 @@ private:
 
   // Call map for user memory with at least this size.
   static const uptr MapSizeIncrement = 1UL << 17;
+  // Fill at most this number of batches from the newly map'd memory.
+  static const u32 MaxNumBatches = 8U;
 
   struct RegionStats {
     uptr PoppedBlocks;
@@ -201,7 +213,7 @@ private:
 
   struct ALIGNED(SCUDO_CACHE_LINE_SIZE) RegionInfo {
     HybridMutex Mutex;
-    IntrusiveList<TransferBatch> FreeList;
+    SinglyLinkedList<TransferBatch> FreeList;
     RegionStats Stats;
     bool CanRelease;
     bool Exhausted;
@@ -212,7 +224,7 @@ private:
     MapPlatformData Data;
     ReleaseToOsInfo ReleaseInfo;
   };
-  COMPILER_CHECK(sizeof(RegionInfo) % SCUDO_CACHE_LINE_SIZE == 0);
+  static_assert(sizeof(RegionInfo) % SCUDO_CACHE_LINE_SIZE == 0, "");
 
   uptr PrimaryBase;
   RegionInfo *RegionInfoArray;
@@ -269,10 +281,12 @@ private:
       if (UNLIKELY(RegionBase + MappedUser + UserMapSize > RegionSize)) {
         if (!Region->Exhausted) {
           Region->Exhausted = true;
-          printStats();
-          Printf(
+          ScopedString Str(1024);
+          getStats(&Str);
+          Str.append(
               "Scudo OOM: The process has Exhausted %zuM for size class %zu.\n",
               RegionSize >> 20, Size);
+          Str.output();
         }
         return nullptr;
       }
@@ -286,16 +300,18 @@ private:
       C->getStats().add(StatMapped, UserMapSize);
     }
 
-    const uptr NumberOfBlocks = Min(
-        8UL * MaxCount, (Region->MappedUser - Region->AllocatedUser) / Size);
+    const u32 NumberOfBlocks = Min(
+        MaxNumBatches * MaxCount,
+        static_cast<u32>((Region->MappedUser - Region->AllocatedUser) / Size));
     DCHECK_GT(NumberOfBlocks, 0);
 
     TransferBatch *B = nullptr;
-    constexpr uptr ShuffleArraySize = 48;
+    constexpr u32 ShuffleArraySize =
+        MaxNumBatches * TransferBatch::MaxNumCached;
     void *ShuffleArray[ShuffleArraySize];
     u32 Count = 0;
     const uptr P = RegionBeg + Region->AllocatedUser;
-    const uptr AllocatedUser = NumberOfBlocks * Size;
+    const uptr AllocatedUser = Size * NumberOfBlocks;
     for (uptr I = P; I < P + AllocatedUser; I += Size) {
       ShuffleArray[Count++] = reinterpret_cast<void *>(I);
       if (Count == ShuffleArraySize) {
@@ -311,6 +327,11 @@ private:
         return nullptr;
     }
     DCHECK(B);
+    if (!Region->FreeList.empty()) {
+      Region->FreeList.push_back(B);
+      B = Region->FreeList.front();
+      Region->FreeList.pop_front();
+    }
     DCHECK_GT(B->getCount(), 0);
 
     C->getStats().add(StatFree, AllocatedUser);
@@ -322,21 +343,21 @@ private:
     return B;
   }
 
-  void printStats(uptr ClassId, uptr Rss) const {
+  void getStats(ScopedString *Str, uptr ClassId, uptr Rss) const {
     RegionInfo *Region = getRegionInfo(ClassId);
     if (Region->MappedUser == 0)
       return;
     const uptr InUse = Region->Stats.PoppedBlocks - Region->Stats.PushedBlocks;
     const uptr TotalChunks = Region->AllocatedUser / getSizeByClassId(ClassId);
-    Printf("%s %02zu (%6zu): mapped: %6zuK popped: %7zu pushed: %7zu inuse: "
-           "%6zu total: %6zu rss: %6zuK releases: %6zu last released: %6zuK "
-           "region: 0x%zx (0x%zx)\n",
-           Region->Exhausted ? "F" : " ", ClassId, getSizeByClassId(ClassId),
-           Region->MappedUser >> 10, Region->Stats.PoppedBlocks,
-           Region->Stats.PushedBlocks, InUse, TotalChunks, Rss >> 10,
-           Region->ReleaseInfo.RangesReleased,
-           Region->ReleaseInfo.LastReleasedBytes >> 10, Region->RegionBeg,
-           getRegionBaseByClassId(ClassId));
+    Str->append("%s %02zu (%6zu): mapped: %6zuK popped: %7zu pushed: %7zu "
+                "inuse: %6zu total: %6zu rss: %6zuK releases: %6zu last "
+                "released: %6zuK region: 0x%zx (0x%zx)\n",
+                Region->Exhausted ? "F" : " ", ClassId,
+                getSizeByClassId(ClassId), Region->MappedUser >> 10,
+                Region->Stats.PoppedBlocks, Region->Stats.PushedBlocks, InUse,
+                TotalChunks, Rss >> 10, Region->ReleaseInfo.RangesReleased,
+                Region->ReleaseInfo.LastReleasedBytes >> 10, Region->RegionBeg,
+                getRegionBaseByClassId(ClassId));
   }
 
   NOINLINE uptr releaseToOSMaybe(RegionInfo *Region, uptr ClassId,
@@ -369,7 +390,7 @@ private:
     }
 
     ReleaseRecorder Recorder(Region->RegionBeg, &Region->Data);
-    releaseFreeMemoryToOS(&Region->FreeList, Region->RegionBeg,
+    releaseFreeMemoryToOS(Region->FreeList, Region->RegionBeg,
                           roundUpTo(Region->AllocatedUser, PageSize) / PageSize,
                           BlockSize, &Recorder);
 

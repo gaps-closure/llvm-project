@@ -48,6 +48,7 @@ class GlobalObject;
 class GlobalValue;
 class GlobalVariable;
 class MachineBasicBlock;
+class MachineBlockFrequencyInfo;
 class MachineConstantPoolValue;
 class MachineDominatorTree;
 class MachineFunction;
@@ -58,7 +59,6 @@ class MachineModuleInfo;
 class MachineOptimizationRemarkEmitter;
 class MCAsmInfo;
 class MCCFIInstruction;
-struct MCCodePaddingContext;
 class MCContext;
 class MCExpr;
 class MCInst;
@@ -69,7 +69,9 @@ class MCSymbol;
 class MCTargetOptions;
 class MDNode;
 class Module;
+class ProfileSummaryInfo;
 class raw_ostream;
+class RemarkStreamer;
 class StackMaps;
 class TargetLoweringObjectFile;
 class TargetMachine;
@@ -107,6 +109,13 @@ public:
   /// Optimization remark emitter.
   MachineOptimizationRemarkEmitter *ORE;
 
+  MachineBlockFrequencyInfo *MBFI;
+
+  ProfileSummaryInfo *PSI;
+
+  /// The symbol for the entry in __patchable_function_entires.
+  MCSymbol *CurrentPatchableFunctionEntrySym = nullptr;
+
   /// The symbol for the current function. This is recalculated at the beginning
   /// of each call to runOnMachineFunction().
   MCSymbol *CurrentFnSym = nullptr;
@@ -126,7 +135,6 @@ public:
   MapVector<const MCSymbol *, GOTEquivUsePair> GlobalGOTEquivs;
 
 private:
-  MCSymbol *CurrentFnBegin = nullptr;
   MCSymbol *CurrentFnEnd = nullptr;
   MCSymbol *CurExceptionSym = nullptr;
 
@@ -139,6 +147,8 @@ private:
   static char ID;
 
 protected:
+  MCSymbol *CurrentFnBegin = nullptr;
+
   /// Protected struct HandlerInfo and Handlers permit target extended
   /// AsmPrinter adds their own handlers.
   struct HandlerInfo {
@@ -280,6 +290,9 @@ public:
   /// Emit a table with all XRay instrumentation points.
   void emitXRayTable();
 
+  DenseMap<const MCSection *, unsigned> PatchableFunctionEntryID;
+  void emitPatchableFunctionEntries();
+
   //===------------------------------------------------------------------===//
   // MachineFunctionPass Implementation.
   //===------------------------------------------------------------------===//
@@ -319,7 +332,7 @@ public:
 
   void emitStackSizeSection(const MachineFunction &MF);
 
-  void emitRemarksSection(Module &M);
+  void emitRemarksSection(RemarkStreamer &RS);
 
   enum CFIMoveType { CFI_M_None, CFI_M_EH, CFI_M_Debug };
   CFIMoveType needsCFIMoves() const;
@@ -439,6 +452,9 @@ public:
   /// Targets can override this to customize the output of IMPLICIT_DEF
   /// instructions in verbose mode.
   virtual void emitImplicitDef(const MachineInstr *MI) const;
+
+  /// Emit N NOP instructions.
+  void emitNops(unsigned N);
 
   //===------------------------------------------------------------------===//
   // Symbol Lowering Routines.
@@ -689,8 +705,6 @@ private:
   GCMetadataPrinter *GetOrCreateGCPrinter(GCStrategy &S);
   /// Emit GlobalAlias or GlobalIFunc.
   void emitGlobalIndirectSymbol(Module &M, const GlobalIndirectSymbol &GIS);
-  void setupCodePaddingContext(const MachineBasicBlock &MBB,
-                               MCCodePaddingContext &Context) const;
 };
 
 } // end namespace llvm

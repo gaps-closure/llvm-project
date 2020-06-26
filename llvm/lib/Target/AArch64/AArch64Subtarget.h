@@ -38,6 +38,11 @@ class AArch64Subtarget final : public AArch64GenSubtargetInfo {
 public:
   enum ARMProcFamilyEnum : uint8_t {
     Others,
+    AppleA7,
+    AppleA10,
+    AppleA11,
+    AppleA12,
+    AppleA13,
     CortexA35,
     CortexA53,
     CortexA55,
@@ -47,8 +52,6 @@ public:
     CortexA73,
     CortexA75,
     CortexA76,
-    Cyclone,
-    ExynosM1,
     ExynosM3,
     Falkor,
     Kryo,
@@ -60,7 +63,8 @@ public:
     ThunderXT81,
     ThunderXT83,
     ThunderXT88,
-    TSV110
+    TSV110,
+    ThunderX3T110
   };
 
 protected:
@@ -116,6 +120,7 @@ protected:
   bool HasTRACEV8_4 = false;
   bool HasAM = false;
   bool HasSEL2 = false;
+  bool HasPMU = false;
   bool HasTLB_RMI = false;
   bool HasFMI = false;
   bool HasRCPC_IMMO = false;
@@ -353,10 +358,10 @@ public:
   unsigned getVectorInsertExtractBaseCost() const {
     return VectorInsertExtractBaseCost;
   }
-  unsigned getCacheLineSize() const { return CacheLineSize; }
-  unsigned getPrefetchDistance() const { return PrefetchDistance; }
-  unsigned getMinPrefetchStride() const { return MinPrefetchStride; }
-  unsigned getMaxPrefetchIterationsAhead() const {
+  unsigned getCacheLineSize() const override { return CacheLineSize; }
+  unsigned getPrefetchDistance() const override { return PrefetchDistance; }
+  unsigned getMinPrefetchStride() const override { return MinPrefetchStride; }
+  unsigned getMaxPrefetchIterationsAhead() const override {
     return MaxPrefetchIterationsAhead;
   }
   unsigned getPrefFunctionLogAlignment() const {
@@ -435,6 +440,7 @@ public:
   bool hasTRACEV8_4() const { return HasTRACEV8_4; }
   bool hasAM() const { return HasAM; }
   bool hasSEL2() const { return HasSEL2; }
+  bool hasPMU() const { return HasPMU; }
   bool hasTLB_RMI() const { return HasTLB_RMI; }
   bool hasFMI() const { return HasFMI; }
   bool hasRCPC_IMMO() const { return HasRCPC_IMMO; }
@@ -473,6 +479,8 @@ public:
                            unsigned NumRegionInstrs) const override;
 
   bool enableEarlyIfConversion() const override;
+
+  bool enableAdvancedRASplitCost() const override { return true; }
 
   std::unique_ptr<PBQPRAConstraint> getCustomPBQPConstraints() const override;
 

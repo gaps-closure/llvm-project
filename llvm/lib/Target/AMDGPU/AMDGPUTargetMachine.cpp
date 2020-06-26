@@ -37,6 +37,7 @@
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
@@ -182,7 +183,7 @@ static cl::opt<bool> EnableScalarIRPasses(
   cl::init(true),
   cl::Hidden);
 
-extern "C" void LLVMInitializeAMDGPUTarget() {
+extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAMDGPUTarget() {
   // Register the target
   RegisterTargetMachine<R600TargetMachine> X(getTheAMDGPUTarget());
   RegisterTargetMachine<GCNTargetMachine> Y(getTheGCNTarget());
@@ -885,9 +886,6 @@ bool GCNPassConfig::addInstSelector() {
   addPass(createSILowerI1CopiesPass());
   addPass(createSIFixupVectorISelPass());
   addPass(createSIAddIMGInitPass());
-  // FIXME: Remove this once the phi on CF_END is cleaned up by either removing
-  // LCSSA or other ways.
-  addPass(&UnreachableMachineBlockElimID);
   return false;
 }
 
@@ -950,7 +948,7 @@ void GCNPassConfig::addOptimizedRegAlloc() {
   insertPass(&RegisterCoalescerID, &SIPreAllocateWWMRegsID, false);
 
   if (EnableDCEInRA)
-    insertPass(&RenameIndependentSubregsID, &DeadMachineInstructionElimID);
+    insertPass(&DetectDeadLanesID, &DeadMachineInstructionElimID);
 
   TargetPassConfig::addOptimizedRegAlloc();
 }
@@ -1052,7 +1050,7 @@ bool GCNTargetMachine::parseMachineFunctionInfo(
     return true;
 
   if (MFI->ScratchRSrcReg != AMDGPU::PRIVATE_RSRC_REG &&
-      !AMDGPU::SReg_128RegClass.contains(MFI->ScratchRSrcReg)) {
+      !AMDGPU::SGPR_128RegClass.contains(MFI->ScratchRSrcReg)) {
     return diagnoseRegisterClass(YamlMFI.ScratchRSrcReg);
   }
 
@@ -1101,7 +1099,7 @@ bool GCNTargetMachine::parseMachineFunctionInfo(
 
   if (YamlMFI.ArgInfo &&
       (parseAndCheckArgument(YamlMFI.ArgInfo->PrivateSegmentBuffer,
-                             AMDGPU::SReg_128RegClass,
+                             AMDGPU::SGPR_128RegClass,
                              MFI->ArgInfo.PrivateSegmentBuffer, 4, 0) ||
        parseAndCheckArgument(YamlMFI.ArgInfo->DispatchPtr,
                              AMDGPU::SReg_64RegClass, MFI->ArgInfo.DispatchPtr,
@@ -1154,6 +1152,8 @@ bool GCNTargetMachine::parseMachineFunctionInfo(
 
   MFI->Mode.IEEE = YamlMFI.Mode.IEEE;
   MFI->Mode.DX10Clamp = YamlMFI.Mode.DX10Clamp;
+  MFI->Mode.FP32Denormals = YamlMFI.Mode.FP32Denormals;
+  MFI->Mode.FP64FP16Denormals = YamlMFI.Mode.FP64FP16Denormals;
 
   return false;
 }

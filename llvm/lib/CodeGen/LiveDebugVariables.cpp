@@ -49,6 +49,7 @@
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Casting.h"
@@ -167,6 +168,10 @@ class UserValue {
   /// Map of slot indices where this value is live.
   LocMap locInts;
 
+  /// Set of interval start indexes that have been trimmed to the
+  /// lexical scope.
+  SmallSet<SlotIndex, 2> trimmedDefs;
+
   /// Insert a DBG_VALUE into MBB at Idx for LocNo.
   void insertDebugValue(MachineBasicBlock *MBB, SlotIndex StartIdx,
                         SlotIndex StopIdx, DbgValueLocation Loc, bool Spilled,
@@ -255,6 +260,25 @@ public:
       locations.back().setIsUse();
     }
     return locations.size() - 1;
+  }
+
+  /// Remove (recycle) a location number. If \p LocNo still is used by the
+  /// locInts nothing is done.
+  void removeLocationIfUnused(unsigned LocNo) {
+    // Bail out if LocNo still is used.
+    for (LocMap::const_iterator I = locInts.begin(); I.valid(); ++I) {
+      DbgValueLocation Loc = I.value();
+      if (Loc.locNo() == LocNo)
+        return;
+    }
+    // Remove the entry in the locations vector, and adjust all references to
+    // location numbers above the removed entry.
+    locations.erase(locations.begin() + LocNo);
+    for (LocMap::iterator I = locInts.begin(); I.valid(); ++I) {
+      DbgValueLocation Loc = I.value();
+      if (!Loc.isUndef() && Loc.locNo() > LocNo)
+        I.setValueUnchecked(Loc.changeLocNo(Loc.locNo() - 1));
+    }
   }
 
   /// Ensure that all virtual register locations are mapped.
@@ -489,7 +513,7 @@ static void printExtendedName(raw_ostream &OS, const DINode *Node,
                               const DILocation *DL) {
   const LLVMContext &Ctx = Node->getContext();
   StringRef Res;
-  unsigned Line;
+  unsigned Line = 0;
   if (const auto *V = dyn_cast<const DILocalVariable>(Node)) {
     Res = V->getName();
     Line = V->getLine();
@@ -897,6 +921,11 @@ void UserValue::computeIntervals(MachineRegisterInfo &MRI,
     SlotIndex RStart = LIS.getInstructionIndex(*Range.first);
     SlotIndex REnd = LIS.getInstructionIndex(*Range.second);
 
+    // Variable locations at the first instruction of a block should be
+    // based on the block's SlotIndex, not the first instruction's index.
+    if (Range.first == Range.first->getParent()->begin())
+      RStart = LIS.getSlotIndexes()->getIndexBefore(*Range.first);
+
     // At the start of each iteration I has been advanced so that
     // I.stop() >= PrevEnd. Check for overlap.
     if (PrevEnd && I.start() < PrevEnd) {
@@ -909,7 +938,8 @@ void UserValue::computeIntervals(MachineRegisterInfo &MRI,
       ++I;
 
       // If the interval also overlaps the start of the "next" (i.e.
-      // current) range create a new interval for the remainder
+      // current) range create a new interval for the remainder (which
+      // may be further trimmed).
       if (RStart < IStop)
         I.insert(RStart, IStop, Loc);
     }
@@ -918,6 +948,13 @@ void UserValue::computeIntervals(MachineRegisterInfo &MRI,
     I.advanceTo(RStart);
     if (!I.valid())
       return;
+
+    if (I.start() < RStart) {
+      // Interval start overlaps range - trim to the scope range.
+      I.setStartUnchecked(RStart);
+      // Remember that this interval was trimmed.
+      trimmedDefs.insert(RStart);
+    }
 
     // The end of a lexical scope range is the last instruction in the
     // range. To convert to an interval we need the index of the
@@ -1080,23 +1117,14 @@ UserValue::splitLocation(unsigned OldLocNo, ArrayRef<unsigned> NewRegs,
     }
   }
 
-  // Finally, remove any remaining OldLocNo intervals and OldLocNo itself.
-  locations.erase(locations.begin() + OldLocNo);
-  LocMapI.goToBegin();
-  while (LocMapI.valid()) {
-    DbgValueLocation v = LocMapI.value();
-    if (v.locNo() == OldLocNo) {
-      LLVM_DEBUG(dbgs() << "Erasing [" << LocMapI.start() << ';'
-                        << LocMapI.stop() << ")\n");
-      LocMapI.erase();
-    } else {
-      // Undef values always have location number UndefLocNo, so don't change
-      // locNo in that case. See getLocationNo().
-      if (!v.isUndef() && v.locNo() > OldLocNo)
-        LocMapI.setValueUnchecked(v.changeLocNo(v.locNo() - 1));
-      ++LocMapI;
-    }
-  }
+  // Finally, remove OldLocNo unless it is still used by some interval in the
+  // locInts map. One case when OldLocNo still is in use is when the register
+  // has been spilled. In such situations the spilled register is kept as a
+  // location until rewriteLocations is called (VirtRegMap is mapping the old
+  // register to the spill slot). So for a while we can have locations that map
+  // to virtual registers that have been removed from both the MachineFunction
+  // and from LiveIntervals.
+  removeLocationIfUnused(OldLocNo);
 
   LLVM_DEBUG({
     dbgs() << "Split result: \t";
@@ -1347,6 +1375,12 @@ void UserValue::emitDebugValues(VirtRegMap *VRM, LiveIntervals &LIS,
         !Loc.isUndef() ? SpillOffsets.find(Loc.locNo()) : SpillOffsets.end();
     bool Spilled = SpillIt != SpillOffsets.end();
     unsigned SpillOffset = Spilled ? SpillIt->second : 0;
+
+    // If the interval start was trimmed to the lexical scope insert the
+    // DBG_VALUE at the previous index (otherwise it appears after the
+    // first instruction in the range).
+    if (trimmedDefs.count(Start))
+      Start = Start.getPrevIndex();
 
     LLVM_DEBUG(dbgs() << "\t[" << Start << ';' << Stop << "):" << Loc.locNo());
     MachineFunction::iterator MBB = LIS.getMBBFromIndex(Start)->getIterator();

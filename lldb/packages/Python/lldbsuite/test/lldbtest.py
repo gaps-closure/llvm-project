@@ -696,7 +696,7 @@ class Base(unittest2.TestCase):
             "settings set plugin.process.gdb-remote.packet-timeout 60",
 
             'settings set symbols.clang-modules-cache-path "{}"'.format(
-                configuration.module_cache_dir),
+                configuration.lldb_module_cache_dir),
             "settings set use-color false",
         ]
         # Make sure that a sanitizer LLDB's environment doesn't get passed on.
@@ -825,8 +825,8 @@ class Base(unittest2.TestCase):
         self.darwinWithFramework = self.platformIsDarwin()
         if sys.platform.startswith("darwin"):
             # Handle the framework environment variable if it is set
-            if hasattr(lldbtest_config, 'lldbFrameworkPath'):
-                framework_path = lldbtest_config.lldbFrameworkPath
+            if hasattr(lldbtest_config, 'lldb_framework_path'):
+                framework_path = lldbtest_config.lldb_framework_path
                 # Framework dir should be the directory containing the framework
                 self.framework_dir = framework_path[:framework_path.rfind('LLDB.framework')]
             # If a framework dir was not specified assume the Xcode build
@@ -1169,26 +1169,10 @@ class Base(unittest2.TestCase):
                 if test is self:
                     print(traceback, file=self.session)
 
-        # put footer (timestamp/rerun instructions) into session
-        testMethod = getattr(self, self._testMethodName)
-        if getattr(testMethod, "__benchmarks_test__", False):
-            benchmarks = True
-        else:
-            benchmarks = False
-
         import datetime
         print(
             "Session info generated @",
             datetime.datetime.now().ctime(),
-            file=self.session)
-        print(
-            "To rerun this test, issue the following command from the 'test' directory:\n",
-            file=self.session)
-        print(
-            "./dotest.py %s -v %s %s" %
-            (self.getRunOptions(),
-             ('+b' if benchmarks else '-t'),
-                self.getRerunArgs()),
             file=self.session)
         self.session.close()
         del self.session
@@ -1938,6 +1922,15 @@ class TestBase(Base):
 
         return environment
 
+    def registerSanitizerLibrariesWithTarget(self, target):
+        runtimes = []
+        for m in target.module_iter():
+            libspec = m.GetFileSpec()
+            if "clang_rt" in libspec.GetFilename():
+                runtimes.append(os.path.join(libspec.GetDirectory(),
+                                             libspec.GetFilename()))
+        return self.registerSharedLibrariesWithTarget(target, runtimes)
+
     # utility methods that tests can use to access the current objects
     def target(self):
         if not self.dbg:
@@ -2372,6 +2365,45 @@ FileCheck output:
 
         self.assertTrue(matched if matching else not matched,
                         msg if msg else EXP_MSG(str, output, exe))
+
+    def expect_expr(
+            self,
+            expr,
+            result_summary=None,
+            result_value=None,
+            result_type=None,
+            error_msg=None,
+            ):
+        """
+        Evaluates the given expression and verifies the result.
+        :param expr: The expression as a string.
+        :param result_summary: The summary that the expression should have. None if the summary should not be checked.
+        :param result_value: The value that the expression should have. None if the value should not be checked.
+        :param result_type: The type that the expression result should have. None if the type should not be checked.
+        :param error_msg: The error message the expression should return. None if the error output should not be checked.
+        """
+        self.assertTrue(expr.strip() == expr, "Expression contains trailing/leading whitespace: '" + expr + "'")
+
+        frame = self.frame()
+        eval_result = frame.EvaluateExpression(expr)
+
+        if error_msg:
+            self.assertFalse(eval_result.IsValid())
+            self.assertEqual(error_msg, eval_result.GetError().GetCString())
+            return
+
+        if not eval_result.GetError().Success():
+            self.assertTrue(eval_result.GetError().Success(),
+                "Unexpected failure with msg: " + eval_result.GetError().GetCString())
+
+        if result_type:
+            self.assertEqual(result_type, eval_result.GetTypeName())
+
+        if result_value:
+            self.assertEqual(result_value, eval_result.GetValue())
+
+        if result_summary:
+            self.assertEqual(result_summary, eval_result.GetSummary())
 
     def invoke(self, obj, name, trace=False):
         """Use reflection to call a method dynamically with no argument."""

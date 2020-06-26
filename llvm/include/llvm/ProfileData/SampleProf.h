@@ -120,6 +120,7 @@ enum SecType {
   SecProfSummary = 1,
   SecNameTable = 2,
   SecProfileSymbolList = 3,
+  SecFuncOffsetTable = 4,
   // marker for the first type of profile.
   SecFuncProfileFirst = 32,
   SecLBRProfile = SecFuncProfileFirst
@@ -135,6 +136,8 @@ static inline std::string getSecName(SecType Type) {
     return "NameTableSection";
   case SecProfileSymbolList:
     return "ProfileSymbolListSection";
+  case SecFuncOffsetTable:
+    return "FuncOffsetTableSection";
   case SecLBRProfile:
     return "LBRProfileSection";
   }
@@ -384,7 +387,10 @@ public:
     if (FS != iter->second.end())
       return &FS->second;
     // If we cannot find exact match of the callee name, return the FS with
-    // the max total count.
+    // the max total count. Only do this when CalleeName is not provided, 
+    // i.e., only for indirect calls.
+    if (!CalleeName.empty()) 
+      return nullptr;
     uint64_t MaxTotalSamples = 0;
     const FunctionSamples *R = nullptr;
     for (const auto &NameFS : iter->second)

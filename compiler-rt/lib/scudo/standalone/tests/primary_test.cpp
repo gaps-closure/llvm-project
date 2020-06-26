@@ -6,15 +6,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tests/scudo_unit_test.h"
+
 #include "primary32.h"
 #include "primary64.h"
 #include "size_class_map.h"
 
-#include "gtest/gtest.h"
-
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 // Note that with small enough regions, the SizeClassAllocator64 also works on
 // 32-bit architectures. It's not something we want to encourage, but we still
@@ -46,12 +47,16 @@ template <typename Primary> static void testPrimary() {
   }
   Cache.destroy(nullptr);
   Allocator->releaseToOS();
-  Allocator->printStats();
+  scudo::ScopedString Str(1024);
+  Allocator->getStats(&Str);
+  Str.output();
 }
 
 TEST(ScudoPrimaryTest, BasicPrimary) {
   using SizeClassMap = scudo::DefaultSizeClassMap;
+#if !SCUDO_FUCHSIA
   testPrimary<scudo::SizeClassAllocator32<SizeClassMap, 18U>>();
+#endif
   testPrimary<scudo::SizeClassAllocator64<SizeClassMap, 24U>>();
 }
 
@@ -76,7 +81,7 @@ TEST(ScudoPrimaryTest, Primary64OOM) {
       AllocationFailed = true;
       break;
     }
-    for (scudo::uptr J = 0; J < B->getCount(); J++)
+    for (scudo::u32 J = 0; J < B->getCount(); J++)
       memset(B->get(J), 'B', Size);
     Batches.push_back(B);
   }
@@ -86,7 +91,9 @@ TEST(ScudoPrimaryTest, Primary64OOM) {
   }
   Cache.destroy(nullptr);
   Allocator.releaseToOS();
-  Allocator.printStats();
+  scudo::ScopedString Str(1024);
+  Allocator.getStats(&Str);
+  Str.output();
   EXPECT_EQ(AllocationFailed, true);
   Allocator.unmapTestOnly();
 }
@@ -125,12 +132,16 @@ template <typename Primary> static void testIteratePrimary() {
   }
   Cache.destroy(nullptr);
   Allocator->releaseToOS();
-  Allocator->printStats();
+  scudo::ScopedString Str(1024);
+  Allocator->getStats(&Str);
+  Str.output();
 }
 
 TEST(ScudoPrimaryTest, PrimaryIterate) {
   using SizeClassMap = scudo::DefaultSizeClassMap;
+#if !SCUDO_FUCHSIA
   testIteratePrimary<scudo::SizeClassAllocator32<SizeClassMap, 18U>>();
+#endif
   testIteratePrimary<scudo::SizeClassAllocator64<SizeClassMap, 24U>>();
 }
 
@@ -180,12 +191,16 @@ template <typename Primary> static void testPrimaryThreaded() {
   for (auto &T : Threads)
     T.join();
   Allocator->releaseToOS();
-  Allocator->printStats();
+  scudo::ScopedString Str(1024);
+  Allocator->getStats(&Str);
+  Str.output();
 }
 
 TEST(ScudoPrimaryTest, PrimaryThreaded) {
   using SizeClassMap = scudo::SvelteSizeClassMap;
+#if !SCUDO_FUCHSIA
   testPrimaryThreaded<scudo::SizeClassAllocator32<SizeClassMap, 18U>>();
+#endif
   testPrimaryThreaded<scudo::SizeClassAllocator64<SizeClassMap, 24U>>();
 }
 
@@ -203,8 +218,7 @@ template <typename Primary> static void testReleaseToOS() {
   Cache.init(nullptr, Allocator.get());
   const scudo::uptr Size = scudo::getPageSizeCached() * 2;
   EXPECT_TRUE(Primary::canAllocate(Size));
-  const scudo::uptr ClassId =
-      Primary::SizeClassMap::getClassIdBySize(Size);
+  const scudo::uptr ClassId = Primary::SizeClassMap::getClassIdBySize(Size);
   void *P = Cache.allocate(ClassId);
   EXPECT_NE(P, nullptr);
   Cache.deallocate(ClassId, P);
@@ -214,6 +228,8 @@ template <typename Primary> static void testReleaseToOS() {
 
 TEST(ScudoPrimaryTest, ReleaseToOS) {
   using SizeClassMap = scudo::DefaultSizeClassMap;
+#if !SCUDO_FUCHSIA
   testReleaseToOS<scudo::SizeClassAllocator32<SizeClassMap, 18U>>();
+#endif
   testReleaseToOS<scudo::SizeClassAllocator64<SizeClassMap, 24U>>();
 }

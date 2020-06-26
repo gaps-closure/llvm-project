@@ -35,6 +35,7 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSymbol.h"
@@ -3201,8 +3202,8 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
       (CalledFn && CalledFn->hasFnAttribute("no_caller_saved_registers")))
     return false;
 
-  // Functions using retpoline for indirect calls need to use SDISel.
-  if (Subtarget->useRetpolineIndirectCalls())
+  // Functions using thunks for indirect calls need to use SDISel.
+  if (Subtarget->useIndirectThunkCalls())
     return false;
 
   // Handle only C, fastcc, and webkit_js calling conventions for now.
@@ -3218,6 +3219,7 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
   case CallingConv::X86_ThisCall:
   case CallingConv::Win64:
   case CallingConv::X86_64_SysV:
+  case CallingConv::CFGuard_Check:
     break;
   }
 

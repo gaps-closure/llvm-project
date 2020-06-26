@@ -45,6 +45,11 @@ static cl::opt<bool> DisablePowerSched(
   cl::desc("Disable scheduling to minimize mAI power bursts"),
   cl::init(false));
 
+static cl::opt<bool> EnableVGPRIndexMode(
+  "amdgpu-vgpr-index-mode",
+  cl::desc("Use GPR indexing mode instead of movrel for vector indexing"),
+  cl::init(false));
+
 GCNSubtarget::~GCNSubtarget() = default;
 
 R600Subtarget &
@@ -343,11 +348,6 @@ AMDGPUSubtarget::getOccupancyWithLocalMemSize(const MachineFunction &MF) const {
 std::pair<unsigned, unsigned>
 AMDGPUSubtarget::getDefaultFlatWorkGroupSize(CallingConv::ID CC) const {
   switch (CC) {
-  case CallingConv::AMDGPU_CS:
-  case CallingConv::AMDGPU_KERNEL:
-  case CallingConv::SPIR_KERNEL:
-    return std::make_pair(getWavefrontSize() * 2,
-                          std::max(getWavefrontSize() * 4, 256u));
   case CallingConv::AMDGPU_VS:
   case CallingConv::AMDGPU_LS:
   case CallingConv::AMDGPU_HS:
@@ -356,13 +356,12 @@ AMDGPUSubtarget::getDefaultFlatWorkGroupSize(CallingConv::ID CC) const {
   case CallingConv::AMDGPU_PS:
     return std::make_pair(1, getWavefrontSize());
   default:
-    return std::make_pair(1, 16 * getWavefrontSize());
+    return std::make_pair(1u, getMaxFlatWorkGroupSize());
   }
 }
 
 std::pair<unsigned, unsigned> AMDGPUSubtarget::getFlatWorkGroupSizes(
   const Function &F) const {
-  // FIXME: 1024 if function.
   // Default minimum/maximum flat work group sizes.
   std::pair<unsigned, unsigned> Default =
     getDefaultFlatWorkGroupSize(F.getCallingConv());
@@ -492,28 +491,28 @@ bool AMDGPUSubtarget::makeLIDRangeMetadata(Instruction *I) const {
 }
 
 uint64_t AMDGPUSubtarget::getExplicitKernArgSize(const Function &F,
-                                                 unsigned &MaxAlign) const {
+                                                 Align &MaxAlign) const {
   assert(F.getCallingConv() == CallingConv::AMDGPU_KERNEL ||
          F.getCallingConv() == CallingConv::SPIR_KERNEL);
 
   const DataLayout &DL = F.getParent()->getDataLayout();
   uint64_t ExplicitArgBytes = 0;
-  MaxAlign = 1;
+  MaxAlign = Align::None();
 
   for (const Argument &Arg : F.args()) {
     Type *ArgTy = Arg.getType();
 
-    unsigned Align = DL.getABITypeAlignment(ArgTy);
+    const Align Alignment(DL.getABITypeAlignment(ArgTy));
     uint64_t AllocSize = DL.getTypeAllocSize(ArgTy);
-    ExplicitArgBytes = alignTo(ExplicitArgBytes, Align) + AllocSize;
-    MaxAlign = std::max(MaxAlign, Align);
+    ExplicitArgBytes = alignTo(ExplicitArgBytes, Alignment) + AllocSize;
+    MaxAlign = std::max(MaxAlign, Alignment);
   }
 
   return ExplicitArgBytes;
 }
 
 unsigned AMDGPUSubtarget::getKernArgSegmentSize(const Function &F,
-                                                unsigned &MaxAlign) const {
+                                                Align &MaxAlign) const {
   uint64_t ExplicitArgBytes = getExplicitKernArgSize(F, MaxAlign);
 
   unsigned ExplicitOffset = getExplicitKernelArgOffset(F);
@@ -521,7 +520,7 @@ unsigned AMDGPUSubtarget::getKernArgSegmentSize(const Function &F,
   uint64_t TotalSize = ExplicitOffset + ExplicitArgBytes;
   unsigned ImplicitBytes = getImplicitArgNumBytes(F);
   if (ImplicitBytes != 0) {
-    unsigned Alignment = getAlignmentForImplicitArgPtr();
+    const Align Alignment = getAlignmentForImplicitArgPtr();
     TotalSize = alignTo(ExplicitArgBytes, Alignment) + ImplicitBytes;
   }
 
@@ -565,6 +564,10 @@ void GCNSubtarget::overrideSchedPolicy(MachineSchedPolicy &Policy,
 
 bool GCNSubtarget::hasMadF16() const {
   return InstrInfo.pseudoToMCOpcode(AMDGPU::V_MAD_F16) != -1;
+}
+
+bool GCNSubtarget::useVGPRIndexMode() const {
+  return !hasMovrel() || (EnableVGPRIndexMode && hasVGPRIndexMode());
 }
 
 unsigned GCNSubtarget::getOccupancyWithNumSGPRs(unsigned SGPRs) const {
@@ -713,6 +716,43 @@ unsigned GCNSubtarget::getMaxNumVGPRs(const MachineFunction &MF) const {
   return MaxNumVGPRs;
 }
 
+void GCNSubtarget::adjustSchedDependency(SUnit *Src, SUnit *Dst,
+                                         SDep &Dep) const {
+  if (Dep.getKind() != SDep::Kind::Data || !Dep.getReg() ||
+      !Src->isInstr() || !Dst->isInstr())
+    return;
+
+  MachineInstr *SrcI = Src->getInstr();
+  MachineInstr *DstI = Dst->getInstr();
+
+  if (SrcI->isBundle()) {
+    const SIRegisterInfo *TRI = getRegisterInfo();
+    auto Reg = Dep.getReg();
+    MachineBasicBlock::const_instr_iterator I(SrcI->getIterator());
+    MachineBasicBlock::const_instr_iterator E(SrcI->getParent()->instr_end());
+    unsigned Lat = 0;
+    for (++I; I != E && I->isBundledWithPred(); ++I) {
+      if (I->modifiesRegister(Reg, TRI))
+        Lat = InstrInfo.getInstrLatency(getInstrItineraryData(), *I);
+      else if (Lat)
+        --Lat;
+    }
+    Dep.setLatency(Lat);
+  } else if (DstI->isBundle()) {
+    const SIRegisterInfo *TRI = getRegisterInfo();
+    auto Reg = Dep.getReg();
+    MachineBasicBlock::const_instr_iterator I(DstI->getIterator());
+    MachineBasicBlock::const_instr_iterator E(DstI->getParent()->instr_end());
+    unsigned Lat = InstrInfo.getInstrLatency(getInstrItineraryData(), *SrcI);
+    for (++I; I != E && I->isBundledWithPred() && Lat; ++I) {
+      if (I->readsRegister(Reg, TRI))
+        break;
+      --Lat;
+    }
+    Dep.setLatency(Lat);
+  }
+}
+
 namespace {
 struct MemOpClusterMutation : ScheduleDAGMutation {
   const SIInstrInfo *TII;
@@ -773,6 +813,11 @@ struct FillMFMAShadowMutation : ScheduleDAGMutation {
     return MI && TII->isSALU(*MI) && !MI->isTerminator();
   }
 
+  bool isVALU(const SUnit *SU) const {
+    const MachineInstr *MI = SU->getInstr();
+    return MI && TII->isVALU(*MI);
+  }
+
   bool canAddEdge(const SUnit *Succ, const SUnit *Pred) const {
     if (Pred->NodeNum < Succ->NodeNum)
       return true;
@@ -821,7 +866,7 @@ struct FillMFMAShadowMutation : ScheduleDAGMutation {
 
       for (SDep &SI : From->Succs) {
         SUnit *SUv = SI.getSUnit();
-        if (SUv != From && TII->isVALU(*SUv->getInstr()) && canAddEdge(SUv, SU))
+        if (SUv != From && isVALU(SUv) && canAddEdge(SUv, SU))
           SUv->addPred(SDep(SU, SDep::Artificial), false);
       }
 

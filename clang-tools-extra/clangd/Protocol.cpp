@@ -257,7 +257,7 @@ SymbolKind indexSymbolKindToSymbolKind(index::SymbolKind Kind) {
     return SymbolKind::Property;
   case index::SymbolKind::Constructor:
   case index::SymbolKind::Destructor:
-    return SymbolKind::Method;
+    return SymbolKind::Constructor;
   case index::SymbolKind::ConversionFunction:
     return SymbolKind::Function;
   case index::SymbolKind::Parameter:
@@ -826,6 +826,7 @@ llvm::json::Value toJSON(const CompletionItem &CI) {
     Result["additionalTextEdits"] = llvm::json::Array(CI.additionalTextEdits);
   if (CI.deprecated)
     Result["deprecated"] = CI.deprecated;
+  Result["score"] = CI.score;
   return std::move(Result);
 }
 
@@ -1063,7 +1064,8 @@ bool operator==(const SemanticHighlightingInformation &Lhs,
 
 llvm::json::Value toJSON(const SemanticHighlightingInformation &Highlighting) {
   return llvm::json::Object{{"line", Highlighting.Line},
-                            {"tokens", Highlighting.Tokens}};
+                            {"tokens", Highlighting.Tokens},
+                            {"isInactive", Highlighting.IsInactive}};
 }
 
 llvm::json::Value toJSON(const SemanticHighlightingParams &Highlighting) {
@@ -1086,5 +1088,18 @@ llvm::json::Value toJSON(const SelectionRange &Out) {
   }
   return llvm::json::Object{{"range", Out.range}};
 }
+
+bool fromJSON(const llvm::json::Value &Params, DocumentLinkParams &R) {
+  llvm::json::ObjectMapper O(Params);
+  return O && O.map("textDocument", R.textDocument);
+}
+
+llvm::json::Value toJSON(const DocumentLink &DocumentLink) {
+  return llvm::json::Object{
+      {"range", DocumentLink.range},
+      {"target", DocumentLink.target},
+  };
+}
+
 } // namespace clangd
 } // namespace clang

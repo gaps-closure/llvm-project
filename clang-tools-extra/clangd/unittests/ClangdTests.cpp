@@ -959,28 +959,6 @@ TEST(ClangdTests, PreambleVFSStatCache) {
 }
 #endif
 
-TEST_F(ClangdVFSTest, FlagsWithPlugins) {
-  MockFSProvider FS;
-  ErrorCheckingDiagConsumer DiagConsumer;
-  MockCompilationDatabase CDB;
-  CDB.ExtraClangFlags = {
-      "-Xclang",
-      "-add-plugin",
-      "-Xclang",
-      "random-plugin",
-  };
-  OverlayCDB OCDB(&CDB);
-  ClangdServer Server(OCDB, FS, DiagConsumer, ClangdServer::optsForTest());
-
-  auto FooCpp = testPath("foo.cpp");
-  const auto SourceContents = "int main() { return 0; }";
-  FS.Files[FooCpp] = FooCpp;
-  Server.addDocument(FooCpp, SourceContents);
-  auto Result = dumpASTWithoutMemoryLocs(Server, FooCpp);
-  EXPECT_TRUE(Server.blockUntilIdleForTest()) << "Waiting for diagnostics";
-  EXPECT_NE(Result, "<no-ast>");
-}
-
 TEST_F(ClangdVFSTest, FallbackWhenPreambleIsNotReady) {
   MockFSProvider FS;
   ErrorCheckingDiagConsumer DiagConsumer;
@@ -1083,6 +1061,27 @@ TEST_F(ClangdVFSTest, FallbackWhenWaitingForCompileCommand) {
                   .Completions,
               ElementsAre(AllOf(Field(&CodeCompletion::Name, "xyz"),
                                 Field(&CodeCompletion::Scope, "ns::"))));
+}
+
+TEST_F(ClangdVFSTest, TestStackOverflow) {
+  MockFSProvider FS;
+  ErrorCheckingDiagConsumer DiagConsumer;
+  MockCompilationDatabase CDB;
+  ClangdServer Server(CDB, FS, DiagConsumer, ClangdServer::optsForTest());
+
+  const char *SourceContents = R"cpp(
+    constexpr int foo() { return foo(); }
+    static_assert(foo());
+  )cpp";
+
+  auto FooCpp = testPath("foo.cpp");
+  FS.Files[FooCpp] = SourceContents;
+
+  Server.addDocument(FooCpp, SourceContents);
+  ASSERT_TRUE(Server.blockUntilIdleForTest()) << "Waiting for diagnostics";
+  // check that we got a constexpr depth error, and not crashed by stack
+  // overflow
+  EXPECT_TRUE(DiagConsumer.hadErrorInLastDiags());
 }
 
 } // namespace

@@ -1,11 +1,6 @@
 About
 ========
 
-.. warning::
-
-   If you are using a released version of LLVM, see `the download page
-   <http://llvm.org/releases/>`_ to find your documentation.
-
 The LLVM compiler infrastructure supports a wide range of projects, from
 industrial strength compilers to specialized JIT applications to small
 research projects.
@@ -30,7 +25,8 @@ Several introductory papers and presentations.
   .. __: http://llvm.org/pubs/2008-10-04-ACAT-LLVM-Intro.html
 
 `Intro to LLVM`__
-  Book chapter providing a compiler hacker's introduction to LLVM.
+  A chapter from the book "The Architecture of Open Source Applications" that
+  describes high-level design decisions that shaped LLVM.
 
   .. __: http://www.aosabook.org/en/llvm.html
 
